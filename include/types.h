@@ -19,22 +19,26 @@
 
 struct KEY {
   __u64 inode;
+  __u64 dev;
 };
 
 struct VALUE {
   __u64 dummy;
 };
 
-struct EVENT {
-  __u64 parent_inode;
-  __u64 parent_dev;
+struct dentry_ctx {
   __u64 inode;
   __u64 dev;
+  __u8 filepath[MAX_FILENAME_LEN];
+  __s64 before_size;
+};
+
+struct EVENT {
   __u64 giduid;
-  __u8 filename[MAX_FILENAME_LEN];
   __u8 change_type;
   __u32 bytes_written;
   __s64 file_size;
+  struct dentry_ctx dentry_ctx;
 };
 
 #endif /* __TYPES_H */
