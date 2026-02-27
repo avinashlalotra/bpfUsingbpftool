@@ -1,0 +1,4 @@
+include/vmlinux.h
+tests/bin/*
+tests/tmp/*
+*.o

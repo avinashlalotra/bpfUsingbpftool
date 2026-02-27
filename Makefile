@@ -3,14 +3,14 @@ F ?=folder
 
 
 all: vmlinux
-	clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -I. -c main.c -o prog.bpf.o
+	clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -I. -c src/create.bpf.c -o create.bpf.o
 
 load:
-	sudo bpftool prog loadall prog.bpf.o /sys/fs/bpf/myprog autoattach
+	sudo bpftool prog loadall create.bpf.o /sys/fs/bpf/myprog autoattach
 
 vmlinux:
 	echo "[+] Dumping vmlinux BTF for CO-RE"
-	sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+	sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > include/vmlinux.h
 
 unload:
 	sudo rm -r /sys/fs/bpf/myprog
@@ -27,6 +27,6 @@ dump:
 
 
 clean:
-	rm -f prog.bpf.o vmlinux.h
+	rm -f create.bpf.o vmlinux.h
 
 

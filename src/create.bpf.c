@@ -1,75 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// vfs_namespace_track.bpf.c
-// Tracks namespace operations on monitored directories
 
-#include "vmlinux.h"
+#include "../include/maps.h"
+#include "../include/vmlinux.h"
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-
-#define MAX_FILENAME_LEN 255
-
-/* Event types */
-#define CREATE_EVENT 0x10u
-#define MKDIR_EVENT 0x11u
-#define MKNOD_EVENT 0x12u
-#define LINK_EVENT 0x13u
-#define DELETE_EVENT 0x14u
-
-#ifndef S_ISDIR
-#define S_IFMT 00170000
-#define S_IFDIR 0040000
-#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
-#endif
-
-/* ───────────────────────────────────────────── */
-
-struct KEY {
-  __u64 inode;
-};
-
-struct VALUE {
-  __u64 dummy;
-};
-
-struct EVENT {
-  __u64 parent_inode;
-  __u64 parent_dev;
-  __u64 inode;
-  __u64 dev;
-  __u64 giduid;
-  __u8 filename[MAX_FILENAME_LEN];
-  __u8 change_type;
-  __u32 reserved;
-  __s64 file_size;
-};
-
-/* Monitored directories */
-struct {
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(max_entries, 1024);
-  __type(key, struct KEY);
-  __type(value, struct VALUE);
-} InodeMap SEC(".maps");
-
-/* Ring buffer */
-struct {
-  __uint(type, BPF_MAP_TYPE_RINGBUF);
-  __uint(max_entries, 1 << 22);
-} rb SEC(".maps");
-
-/** LRU hash map for fentry/fexit communication */
-struct {
-  __uint(type, BPF_MAP_TYPE_LRU_HASH);
-  __uint(max_entries, 128);
-  __type(key, u64);
-  __type(value, struct EVENT);
-} LruMap SEC(".maps");
-
-/* ───────────────────────────────────────────── */
-/* Helpers                                      */
-/* ───────────────────────────────────────────── */
 
 static __always_inline bool is_monitored(struct inode *dir) {
   struct KEY key = {};
@@ -192,7 +126,7 @@ int BPF_PROG(fexit_vfs_mkdir, struct mnt_idmap *idmap, struct inode *dir,
     return 0;
 
   update_dir_map(dentry, true);
-  emit_event(dir, dentry, MKDIR_EVENT);
+  emit_event(dir, dentry, CREATE_EVENT);
   return 0;
 }
 
@@ -292,127 +226,6 @@ int BPF_PROG(fexit_vfs_rmdir, struct mnt_idmap *idmap, struct inode *dir,
 out:
   bpf_map_delete_elem(&LruMap, &pid_tgid);
 
-  return 0;
-}
-
-/* ───────────────────────────────────────────── */
-/* RENAME (delete + create model)               */
-/* ───────────────────────────────────────────── */
-SEC("fentry/vfs_rename")
-int BPF_PROG(fentry_vfs_rename, struct renamedata *rd) {
-  u64 key = bpf_get_current_pid_tgid();
-  struct EVENT ev = {};
-
-  struct inode *old_dir = BPF_CORE_READ(rd, old_dir);
-  struct inode *new_dir = BPF_CORE_READ(rd, new_dir);
-  struct dentry *old_dentry = BPF_CORE_READ(rd, old_dentry);
-  struct dentry *new_dentry = BPF_CORE_READ(rd, new_dentry);
-
-  if (!old_dir || !new_dir || !old_dentry || !new_dentry)
-    return 0;
-
-  struct inode *inode = BPF_CORE_READ(old_dentry, d_inode);
-  if (!inode)
-    return 0;
-
-  ev.inode = BPF_CORE_READ(inode, i_ino);
-  ev.dev = BPF_CORE_READ(inode, i_sb, s_dev);
-  ev.file_size = BPF_CORE_READ(inode, i_size);
-
-  ev.parent_inode = BPF_CORE_READ(old_dir, i_ino);
-  ev.parent_dev = BPF_CORE_READ(old_dir, i_sb, s_dev);
-
-  __u32 uid = BPF_CORE_READ(inode, i_uid.val);
-  __u32 gid = BPF_CORE_READ(inode, i_gid.val);
-  ev.giduid = ((__u64)gid << 32) | uid;
-
-  bpf_probe_read_str(ev.filename, sizeof(ev.filename),
-                     BPF_CORE_READ(old_dentry, d_name.name));
-
-  struct inode *target = BPF_CORE_READ(new_dentry, d_inode);
-  if (target)
-    ev.reserved = 1;
-
-  bpf_printk("[RENAME-ENTRY] inode=%llu old_parent=%llu name=%s overwrite=%u\n",
-             ev.inode, ev.parent_inode, ev.filename, ev.reserved);
-
-  bpf_map_update_elem(&LruMap, &key, &ev, BPF_ANY);
-  return 0;
-}
-SEC("fexit/vfs_rename")
-int BPF_PROG(fexit_vfs_rename, struct renamedata *rd, int ret) {
-  u64 key = bpf_get_current_pid_tgid();
-  struct EVENT *ev = bpf_map_lookup_elem(&LruMap, &key);
-
-  if (!ev)
-    return 0;
-
-  struct inode *old_dir = BPF_CORE_READ(rd, old_dir);
-  struct inode *new_dir = BPF_CORE_READ(rd, new_dir);
-  struct dentry *old_dentry = BPF_CORE_READ(rd, old_dentry);
-  struct dentry *new_dentry = BPF_CORE_READ(rd, new_dentry);
-
-  if (ret != 0) {
-    bpf_printk("[RENAME-EXIT] FAILED ret=%d inode=%llu\n", ret, ev->inode);
-    goto cleanup;
-  }
-
-  bool old_mon = old_dir && is_monitored(old_dir);
-  bool new_mon = new_dir && is_monitored(new_dir);
-
-  bpf_printk(
-      "[RENAME-EXIT] SUCCESS inode=%llu old_mon=%d new_mon=%d overwrite=%u\n",
-      ev->inode, old_mon, new_mon, ev->reserved);
-
-  /*
-   * 1️⃣ DELETE old path
-   */
-  if (old_mon) {
-    ev->change_type = DELETE_EVENT;
-
-    bpf_printk("  -> DELETE old path parent=%llu name=%s\n", ev->parent_inode,
-               ev->filename);
-
-    bpf_ringbuf_output(&rb, ev, sizeof(*ev), 0);
-    update_dir_map(old_dentry, false);
-  }
-
-  /*
-   * 2️⃣ DELETE overwritten target
-   */
-  if (new_mon && ev->reserved) {
-    ev->change_type = DELETE_EVENT;
-    ev->parent_inode = BPF_CORE_READ(new_dir, i_ino);
-    ev->parent_dev = BPF_CORE_READ(new_dir, i_sb, s_dev);
-
-    bpf_printk("  -> DELETE overwritten target parent=%llu\n",
-               ev->parent_inode);
-
-    bpf_ringbuf_output(&rb, ev, sizeof(*ev), 0);
-  }
-
-  /*
-   * 3️⃣ CREATE new path
-   */
-  if (new_mon) {
-    ev->change_type = CREATE_EVENT;
-
-    ev->parent_inode = BPF_CORE_READ(new_dir, i_ino);
-    ev->parent_dev = BPF_CORE_READ(new_dir, i_sb, s_dev);
-
-    bpf_probe_read_str(ev->filename, sizeof(ev->filename),
-                       BPF_CORE_READ(new_dentry, d_name.name));
-
-    bpf_printk("  -> CREATE new path parent=%llu name=%s\n", ev->parent_inode,
-               ev->filename);
-
-    bpf_ringbuf_output(&rb, ev, sizeof(*ev), 0);
-
-    update_dir_map(new_dentry, true);
-  }
-
-cleanup:
-  bpf_map_delete_elem(&LruMap, &key);
   return 0;
 }
 char LICENSE[] SEC("license") = "GPL";
