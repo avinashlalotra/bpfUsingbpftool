@@ -1,9 +1,13 @@
+#ifndef __TYPES_H
+#define __TYPES_H
+
 #include "vmlinux.h"
 #define MAX_FILENAME_LEN 255
 
 /* Event types */
-#define CREATE_EVENT 0x10u
-#define DELETE_EVENT 0x14u
+#define CREATE_EVENT 0xcu
+#define DELETE_EVENT 0xdu
+#define WRITE_EVENT 0xeu
 
 #ifndef S_ISDIR
 #define S_IFMT 00170000
@@ -29,6 +33,8 @@ struct EVENT {
   __u64 giduid;
   __u8 filename[MAX_FILENAME_LEN];
   __u8 change_type;
-  __u32 reserved;
+  __u32 bytes_written;
   __s64 file_size;
 };
+
+#endif /* __TYPES_H */

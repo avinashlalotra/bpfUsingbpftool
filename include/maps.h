@@ -1,3 +1,6 @@
+#ifndef __MAPS_H
+#define __MAPS_H
+
 #include "types.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -23,3 +26,5 @@ struct {
   __type(key, u64);
   __type(value, struct EVENT);
 } LruMap SEC(".maps");
+
+#endif /* __MAPS_H */

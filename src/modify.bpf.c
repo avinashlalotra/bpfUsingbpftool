@@ -25,8 +25,9 @@
 //
 // NOTE: vfs_iter_write intentionally omitted — it is called internally by
 // vfs_writev in some kernel versions, which would double-count those writes.
-
-#include "vmlinux.h"
+#include "../include/maps.h"
+#include "../include/types.h"
+#include "../include/vmlinux.h"
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -203,7 +204,7 @@ int BPF_PROG(fexit_vfs_copy_file_range, struct file *file_in, loff_t pos_in,
 SEC("fexit/kernel_write")
 int BPF_PROG(fexit_kernel_write, struct file *file, const void *buf,
              size_t count, loff_t *pos, ssize_t ret) {
-  account(file, ret, KERNEL_WRITE_EVENT);
+  account(file, ret, WRITE_EVENT);
   return 0;
 }
 
@@ -212,7 +213,7 @@ int BPF_PROG(fexit_kernel_write, struct file *file, const void *buf,
 SEC("fexit/__kernel_write")
 int BPF_PROG(fexit___kernel_write, struct file *file, const void *buf,
              size_t count, loff_t *pos, ssize_t ret) {
-  account(file, ret, KERNEL_WRITE_EVENT);
+  account(file, ret, WRITE_EVENT);
   return 0;
 }
 
@@ -253,7 +254,7 @@ int BPF_PROG(fim_mmap_file, struct file *file, unsigned long prot,
   name = BPF_CORE_READ(file, f_path.dentry, d_name.name);
   bpf_probe_read_str(event->filename, sizeof(event->filename), name);
 
-  event->change_type = MMAP_WRITE_EVENT;
+  event->change_type = WRITE_EVENT;
   event->bytes_written = 0; // mmap: exact byte count unknown
   event->file_size = BPF_CORE_READ(file, f_inode, i_size);
 
@@ -297,7 +298,7 @@ int BPF_PROG(fexit_vfs_fallocate, struct file *file, int mode, loff_t offset,
   event->inode = BPF_CORE_READ(file, f_inode, i_ino);
   event->dev = BPF_CORE_READ(file, f_inode, i_sb, s_dev);
   event->giduid = bpf_get_current_uid_gid();
-  event->change_type = FALLOCATE_EVENT;
+  event->change_type = WRITE_EVENT;
   event->bytes_written = (__u32)len;
   event->file_size = BPF_CORE_READ(file, f_inode, i_size);
 
@@ -363,7 +364,7 @@ int BPF_PROG(fexit_vfs_truncate, const struct path *path, loff_t length,
   event->inode = BPF_CORE_READ(path, dentry, d_inode, i_ino);
   event->dev = BPF_CORE_READ(path, dentry, d_inode, i_sb, s_dev);
   event->giduid = bpf_get_current_uid_gid();
-  event->change_type = TRUNCATE_EVENT;
+  event->change_type = WRITE_EVENT;
   event->bytes_written = (diff > 0) ? (__u32)diff : 0;
   event->file_size = length;
 
@@ -419,7 +420,7 @@ int BPF_PROG(fexit_do_truncate, struct mnt_idmap *idmap, struct dentry *dentry,
   event->inode = BPF_CORE_READ(dentry, d_inode, i_ino);
   event->dev = BPF_CORE_READ(dentry, d_inode, i_sb, s_dev);
   event->giduid = bpf_get_current_uid_gid();
-  event->change_type = TRUNCATE_EVENT;
+  event->change_type = WRITE_EVENT;
   event->bytes_written = (diff > 0) ? (__u32)diff : 0;
   event->file_size = length;
 
@@ -432,5 +433,3 @@ out:
   depth_dec();
   return 0;
 }
-
-char LICENSE[] SEC("license") = "GPL";
