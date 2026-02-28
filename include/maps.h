@@ -2,6 +2,7 @@
 #define __MAPS_H
 
 #include "types.h"
+#include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
@@ -27,4 +28,11 @@ struct {
   __type(value, struct dentry_ctx);
 } LruMap SEC(".maps");
 
+/* heap scratch space for dentry_ctx */
+struct {
+  __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+  __uint(max_entries, 1);
+  __type(key, u32);
+  __type(value, struct dentry_ctx);
+} scratch_dentry_ctx SEC(".maps");
 #endif /* __MAPS_H */

@@ -19,7 +19,6 @@ int BPF_PROG(lsm_inode_create, struct inode *inode, struct dentry *dentry) {
   emit_event("lsm_inode_create", parent_inode, dentry, CREATE_EVENT);
   return 0;
 }
-
 SEC("fexit/vfs_mkdir")
 int BPF_PROG(fexit_vfs_mkdir, struct mnt_idmap *idmap, struct inode *dir,
              struct dentry *dentry, umode_t mode, int ret) {

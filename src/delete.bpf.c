@@ -5,7 +5,9 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-// Unlink - file deletion
+/* ───────────────────────────────────────────── */
+/* Unlink - file deletion */
+/* ───────────────────────────────────────────── */
 /* vfs_unlink - unlink a filesystem object
  * @idmap:	idmap of the mount the inode was found from
  * @dir:	parent directory
@@ -22,17 +24,24 @@ int BPF_PROG(fentry_vfs_unlink, struct mnt_idmap *idmap, struct inode *dir,
     return 0;
 
   u64 pid_tgid = bpf_get_current_pid_tgid();
-  // populate the event and store in lru hash map
-  struct dentry_ctx dentry_ctx = {};
 
-  dentry_ctx.inode = BPF_CORE_READ(dentry, d_inode, i_ino);
-  dentry_ctx.dev = BPF_CORE_READ(dentry, d_inode, i_sb, s_dev);
-  dentry_ctx.before_size = BPF_CORE_READ(dentry, d_inode, i_size);
+  // grab per-cpu scratch space instead of stack-allocating
+  u32 zero = 0;
+  struct dentry_ctx *dentry_ctx =
+      bpf_map_lookup_elem(&scratch_dentry_ctx, &zero);
+  if (!dentry_ctx)
+    return 0;
 
-  bpf_probe_read_str(dentry_ctx.filepath, sizeof(dentry_ctx.filepath),
-                     BPF_CORE_READ(dentry, d_name.name));
+  // zero it out since per-cpu maps retain values between calls
+  __builtin_memset(dentry_ctx, 0, sizeof(*dentry_ctx));
 
-  bpf_map_update_elem(&LruMap, &pid_tgid, &dentry_ctx, BPF_ANY);
+  dentry_ctx->inode = BPF_CORE_READ(dentry, d_inode, i_ino);
+  dentry_ctx->dev = BPF_CORE_READ(dentry, d_inode, i_sb, s_dev);
+  dentry_ctx->before_size = BPF_CORE_READ(dentry, d_inode, i_size);
+
+  construct_path(dentry, dentry_ctx->filepath);
+
+  bpf_map_update_elem(&LruMap, &pid_tgid, dentry_ctx, BPF_ANY);
 
   return 0;
 }
@@ -101,20 +110,28 @@ int BPF_PROG(fentry_vfs_rmdir, struct mnt_idmap *idmap, struct inode *dir,
              struct dentry *dentry) {
 
   // check if folder is monitored
-  if (!is_monitored(dir))
+  struct inode *ino = BPF_CORE_READ(dentry, d_inode);
+  if (!is_monitored(ino))
     return 0;
 
   u64 pid_tgid = bpf_get_current_pid_tgid();
-  // populate the event and store in lru hash map
-  struct dentry_ctx dentry_ctx = {};
-  dentry_ctx.inode = BPF_CORE_READ(dir, i_ino);
-  dentry_ctx.dev = BPF_CORE_READ(dir, i_sb, s_dev);
-  dentry_ctx.before_size = BPF_CORE_READ(dir, i_size);
+  // grab per-cpu scratch space instead of stack-allocating
+  u32 zero = 0;
+  struct dentry_ctx *dentry_ctx =
+      bpf_map_lookup_elem(&scratch_dentry_ctx, &zero);
+  if (!dentry_ctx)
+    return 0;
 
-  bpf_probe_read_str(dentry_ctx.filepath, sizeof(dentry_ctx.filepath),
-                     BPF_CORE_READ(dentry, d_name.name));
+  // zero it out since per-cpu maps retain values between calls
+  __builtin_memset(dentry_ctx, 0, sizeof(*dentry_ctx));
 
-  bpf_map_update_elem(&LruMap, &pid_tgid, &dentry_ctx, BPF_ANY);
+  dentry_ctx->inode = BPF_CORE_READ(dentry, d_inode, i_ino);
+  dentry_ctx->dev = BPF_CORE_READ(dentry, d_inode, i_sb, s_dev);
+  dentry_ctx->before_size = BPF_CORE_READ(dentry, d_inode, i_size);
+
+  construct_path(dentry, dentry_ctx->filepath);
+
+  bpf_map_update_elem(&LruMap, &pid_tgid, dentry_ctx, BPF_ANY);
 
   return 0;
 }
@@ -139,6 +156,7 @@ int BPF_PROG(fexit_vfs_rmdir, struct mnt_idmap *idmap, struct inode *dir,
   // deletion is sucess full remove entry from inode map
   key.inode = dentry_ctx->inode;
   key.dev = dentry_ctx->dev;
+
   bpf_map_delete_elem(&InodeMap, &key);
 
   // reserve space in ring buffer

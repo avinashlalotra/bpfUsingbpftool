@@ -3,16 +3,14 @@ F ?= folder
 BPF_CLANG ?= clang
 BPF_CFLAGS = -O2 -g -target bpf -D__TARGET_ARCH_x86 -Iinclude
 
-BPF_SRCS := $(wildcard src/*.bpf.c)
-BPF_OBJS := $(BPF_SRCS:.bpf.c=.bpf.o)
-
-FINAL_BPF := fim.bpf.o
+BPF_SRCS := $(wildcard src/*.c)
+BPF_OBJS := $(BPF_SRCS:.c=.bpf.o)
 
 FINAL_BPF := fim.bpf.o
 
 all: vmlinux $(FINAL_BPF)
 
-$(FINAL_BPF):
+$(FINAL_BPF): $(BPF_SRCS)
 	$(BPF_CLANG) $(BPF_CFLAGS) -c src/main.c -o $@
 # Dump vmlinux BTF header
 vmlinux:
@@ -34,10 +32,10 @@ showlog:
 
 # Add folder to monitored map
 map:
-	mkdir -p $(F)
+	mkdir -p $(F) | exit 0
 	sudo bpftool map update id $$(./scripts/getMapid.sh) \
-		key $$(./scripts/printInodeHex.sh $(F)) \
-		value 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+		key $$(./scripts/printInodeHex.sh $(F)) $$(./scripts/dev.sh $(F)) \
+		value 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 
 	$(MAKE) -B dump
 
 # Dump map

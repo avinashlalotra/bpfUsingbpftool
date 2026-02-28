@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  printf("rawDev: %llu\n", (unsigned long long)rawDev(&st));
+  printf("%llu\n", (unsigned long long)rawDev(&st));
 
   return 0;
 }
