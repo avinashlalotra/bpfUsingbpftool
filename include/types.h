@@ -2,7 +2,9 @@
 #define __TYPES_H
 
 #include "vmlinux.h"
-#define MAX_FILENAME_LEN 255
+#define MAX_PATH_LEN 256
+#define PER_LEVEL 64
+#define MAX_DEPTH (MAX_PATH_LEN / PER_LEVEL)
 
 /* Event types */
 #define CREATE_EVENT 0xcu
@@ -27,15 +29,15 @@ struct VALUE {
 };
 
 struct dentry_ctx {
+  char filepath[MAX_PATH_LEN];
   __u64 inode;
   __u64 dev;
-  __u8 filepath[MAX_FILENAME_LEN];
   __s64 before_size;
 };
 
 struct EVENT {
   __u64 giduid;
-  __u8 change_type;
+  __u32 change_type;
   __u32 bytes_written;
   __s64 file_size;
   struct dentry_ctx dentry_ctx;

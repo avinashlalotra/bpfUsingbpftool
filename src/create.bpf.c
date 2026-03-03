@@ -16,13 +16,15 @@ int BPF_PROG(lsm_inode_create, struct inode *inode, struct dentry *dentry) {
 
   if (!is_monitored(parent_inode))
     return 0;
+
   emit_event("lsm_inode_create", parent_inode, dentry, CREATE_EVENT);
   return 0;
 }
 SEC("fexit/vfs_mkdir")
 int BPF_PROG(fexit_vfs_mkdir, struct mnt_idmap *idmap, struct inode *dir,
              struct dentry *dentry, umode_t mode, int ret) {
-  if (ret != 0 || !is_monitored(dir))
+
+  if (!is_monitored(dir))
     return 0;
 
   update_dir_map(dentry, true);
